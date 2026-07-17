@@ -1,0 +1,17 @@
+# Development dependencies. Kept separate from requirements.txt so a
+# production image never ships a test runner or a linter.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest~=8.3.0
+pytest-cov~=5.0.0
+# Spins up throwaway Postgres containers for integration tests, so tests
+# never depend on the dev stack being up.
+testcontainers[postgres]~=4.8.0
+
+# Linter + formatter in one binary; replaces flake8/isort/black.
+ruff~=0.6.0
+mypy~=1.11.0
+pre-commit~=3.8.0

@@ -1,0 +1,32 @@
+# Runtime dependencies — Commodity Price Ingestion Pipeline
+#
+# Pinned with `~=` (compatible release): `~=2.2.0` accepts 2.2.x but never 2.3.
+# We get security patches without a minor release silently changing behaviour
+# mid-project. Airflow is deliberately absent — it arrives with its own
+# constraints file in the orchestration sprint.
+
+# ─── Database ──────────────────────────────────────────────────────────────
+# psycopg 3 (the package is `psycopg`, not `psycopg2`). The [binary] extra
+# ships precompiled wheels, so no local C compiler / libpq is needed —
+# which matters a great deal on Windows.
+psycopg[binary]~=3.2.0
+
+# SQLAlchemy Core gives us connection pooling and safe parameter binding.
+# We will use Core, not the ORM: this is ETL, not a web app with entities.
+SQLAlchemy~=2.0.30
+
+# ─── Extraction & transformation ───────────────────────────────────────────
+requests~=2.32.0
+pandas~=2.2.2
+
+# ─── Configuration ─────────────────────────────────────────────────────────
+# Loads .env into the process for local runs (containers get env directly).
+python-dotenv~=1.0.1
+# Typed, validated settings. Turns a missing/misspelled env var into a loud
+# startup error instead of a None that explodes three functions later.
+pydantic-settings~=2.4.0
+
+# ─── Resilience ────────────────────────────────────────────────────────────
+# Declarative retry/backoff. Essential once we start injecting network
+# timeouts — real transient faults deserve retries, real bugs do not.
+tenacity~=9.0.0

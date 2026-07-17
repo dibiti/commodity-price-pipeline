@@ -1,0 +1,51 @@
+# ─── Secrets ───────────────────────────────────────────────────────────────
+# The single most important entry in this file. .env holds real credentials
+# and webhook URLs; .env.example is the committed, sanitised template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ─── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ─── Tooling caches ────────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ─── Airflow (later sprints) ───────────────────────────────────────────────
+airflow.db
+airflow-webserver.pid
+logs/
+standalone_admin_password.txt
+
+# ─── Data ──────────────────────────────────────────────────────────────────
+# Docker named volumes live outside the repo, but ad-hoc dumps and extracts
+# have a habit of appearing here. Keep the repo code-only.
+*.csv
+*.parquet
+*.sqlite
+*.db
+data/
+
+# ─── IDE / OS ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

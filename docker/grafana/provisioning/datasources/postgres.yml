@@ -1,0 +1,50 @@
+# Grafana datasource provisioning — applied automatically on every boot.
+#
+# Why not just click through the Grafana UI? Because a datasource created by
+# clicking lives only in Grafana's private volume. If that volume is wiped, or
+# someone else clones this repo, it's gone. Defining it here makes the
+# observability layer reproducible and reviewable — infrastructure as code.
+
+apiVersion: 1
+
+datasources:
+  - name: CommodityPostgres
+    type: postgres
+    # A stable uid means dashboard JSON in later sprints can reference this
+    # datasource by uid and keep working across rebuilds.
+    uid: commodity-postgres
+    # `proxy`: the Grafana *server* opens the connection, not the browser.
+    # Required here — your browser has no route into the Docker network.
+    access: proxy
+
+    # ── The single most important line in this file ──────────────────────
+    # `postgres` is the Compose SERVICE NAME, resolved by Docker's embedded
+    # DNS on the pipeline-net network. Port 5432 is the CONTAINER's port.
+    #
+    # This is NOT localhost:5432. Inside the Grafana container, `localhost`
+    # is the Grafana container itself — nothing is listening on 5432 there.
+    # And it is NOT the POSTGRES_HOST_PORT from .env either: the published
+    # host port is a door for your laptop, irrelevant to container-to-
+    # container traffic, which goes straight to the container port.
+    url: postgres:5432
+
+    # ${VAR} is expanded by Grafana from its own environment (passed through
+    # in docker-compose.yml), so no credentials are committed here.
+    database: ${POSTGRES_DB}
+    user: ${POSTGRES_USER}
+    secureJsonData:
+      # `secureJsonData` is encrypted at rest in Grafana's database and never
+      # returned by its API — the correct home for a password.
+      password: ${POSTGRES_PASSWORD}
+
+    jsonData:
+      # Safe here and only here: the traffic never leaves the private bridge
+      # network. Against a managed/cloud Postgres this must be `require`.
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+
+    isDefault: true
+    # Locked in the UI: the file is the source of truth, and an edit made by
+    # clicking would be silently reverted on the next boot anyway.
+    editable: false

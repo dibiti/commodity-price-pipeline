@@ -1,0 +1,144 @@
+# Commodity Price Ingestion Pipeline — local infrastructure
+#
+# Compose V2 no longer uses the top-level `version:` key; it is obsolete and
+# emits a warning if present. Its absence here is deliberate, not an omission.
+#
+# `name` sets the project namespace. Every container, volume and network below
+# is prefixed with it, so this stack can never collide with another project on
+# the same machine that also happens to define a "postgres" service.
+name: commodity-pipeline
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # PostgreSQL — the pipeline's warehouse AND its audit log store.
+  # Holds both the commodity price facts and the `etl_execution_logs` table
+  # that Grafana will read from in Sprint 5.
+  # ─────────────────────────────────────────────────────────────────────────
+  postgres:
+    # Pinned to an exact minor version, never `:latest`. `latest` means your
+    # laptop, your CI runner, and your reviewer's machine can silently pull
+    # three different Postgres versions months apart. Pinning is what makes
+    # "works on my machine" a defensible statement.
+    # Alpine variant: ~80MB vs ~240MB, and we use no exotic locale/extensions.
+    image: postgres:16.4-alpine
+    container_name: cpp-postgres
+
+    # Restart on daemon start or crash, but NOT if we deliberately `stop` it.
+    # `always` would fight us every time we intentionally take the stack down.
+    restart: unless-stopped
+
+    environment:
+      # These names are not arbitrary — the official postgres image's
+      # entrypoint script reads exactly these three to bootstrap the cluster
+      # on first boot. Values come from .env (see `.env.example`).
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required — copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required — copy .env.example to .env}
+
+    ports:
+      # "HOST_INTERFACE:HOST_PORT:CONTAINER_PORT". Only this line makes Postgres
+      # reachable from Windows at localhost:5432 (psql, DBeaver, local python).
+      # Container-to-container traffic does NOT need or use this mapping.
+      #
+      # The 127.0.0.1 prefix is load-bearing. Without it Docker binds to
+      # 0.0.0.0 — every interface — publishing the database to the whole local
+      # network, so anyone on the same WiFi could reach it. Binding to the
+      # loopback interface means only this machine can connect, which is what
+      # "local development database" is supposed to mean.
+      #
+      # Host port is configurable because a locally-installed Postgres may
+      # already own 5432; the container side is always 5432.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+
+    volumes:
+      # Named volume: the database files themselves. Managed by Docker, lives
+      # outside the container's writable layer, and SURVIVES `docker compose
+      # down`. This is the line that stops you losing your warehouse every
+      # time you restart the stack.
+      - pgdata:/var/lib/postgresql/data
+
+      # Bind mount: our repo's SQL, injected into the image's magic bootstrap
+      # directory. The entrypoint runs every .sql/.sh here in filename order,
+      # but ONLY when the data directory is empty (i.e. first boot on a fresh
+      # volume). Read-only — the container has no business editing our repo.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      # `pg_isready` returns 0 only once Postgres is accepting connections.
+      # This matters because the container being "up" and the database being
+      # "ready" are several seconds apart — and Grafana below waits on this.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Grace period for first boot (running initdb scripts) before failed
+      # checks start counting against `retries`.
+      start_period: 15s
+
+    networks:
+      - pipeline-net
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Grafana — the observability face of the project. Queries Postgres directly
+  # over SQL; no Prometheus involved yet (that arrives in a later sprint for
+  # process-level metrics).
+  # ─────────────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: cpp-grafana
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        # Plain `depends_on: [postgres]` only waits for the container to be
+        # *created* — Grafana would race ahead and mark the datasource dead.
+        # `service_healthy` binds startup to the healthcheck above instead.
+        condition: service_healthy
+
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required — copy .env.example to .env}
+      # This is a local dev stack, not a multi-tenant service.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Grafana expands ${VAR} inside provisioning YAML at load time, so the
+      # datasource file can stay credential-free and committable.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    ports:
+      # Loopback-only, for the same reason as Postgres above: this dashboard is
+      # for us, not for the coffee shop's network. Drop the 127.0.0.1 prefix
+      # deliberately if you ever want to demo it from your phone.
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+
+    volumes:
+      # Grafana's own SQLite state: users, sessions, dashboards saved via the
+      # UI. Named volume so hand-made dashboards survive a restart.
+      - grafana-data:/var/lib/grafana
+
+      # Provisioning-as-code: datasources and dashboards defined in the repo,
+      # applied on every boot. This is what makes the stack reproducible for
+      # anyone who clones it — no click-through setup required.
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+
+    networks:
+      - pipeline-net
+
+# ───────────────────────────────────────────────────────────────────────────
+# Named volumes. Declared here, managed by Docker, persist across `down`.
+# Wiped only by an explicit `docker compose down -v`.
+# ───────────────────────────────────────────────────────────────────────────
+volumes:
+  pgdata:
+  grafana-data:
+
+# ───────────────────────────────────────────────────────────────────────────
+# A private bridge network for this stack. Compose would create a default one
+# anyway; declaring it explicitly documents the intent and gives it a stable
+# name. Inside it, Docker's embedded DNS resolves service names to container
+# IPs — which is why Grafana reaches the database at `postgres:5432`.
+# ───────────────────────────────────────────────────────────────────────────
+networks:
+  pipeline-net:
+    driver: bridge
