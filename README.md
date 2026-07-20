@@ -7,8 +7,8 @@ It also has a switch that makes it fail on purpose — injecting schema changes,
 null values or network timeouts — so the monitoring can be tested against real
 failures instead of imaginary ones.
 
-**Status:** early. Only the local infrastructure exists so far — Postgres and
-Grafana in Docker. No pipeline code yet.
+**Status:** early. The infrastructure and the database schema exist. There is no
+pipeline code yet — nothing is fetching prices so far.
 
 ## Requirements
 
@@ -41,6 +41,36 @@ docker compose exec postgres psql -U pipeline -d commodities -c '\dn'
 
 That should list three schemas: `raw` (data as received), `core` (cleaned data),
 and `ops` (the pipeline's own run logs).
+
+## Database schema
+
+Two tables, in separate schemas.
+
+`core.commodity_prices` holds the prices themselves — one row per commodity,
+per day, per currency. `ops.etl_execution_logs` holds one row per pipeline run,
+recording status, duration, row count and any error. Every price row carries the
+`run_id` of the run that wrote it, so you can always ask which run produced a
+given number, or what a failed run managed to write before it died.
+
+Prices are stored as `NUMERIC`, not `FLOAT`. Floats cannot represent most
+decimal fractions exactly, so the error compounds when you aggregate:
+
+```sql
+SELECT sum(0.10::numeric), sum(0.10::double precision)
+FROM generate_series(1, 10000);
+--  1000.00  |  1000.0000000001588
+```
+
+The schema lives in `sql/ddl/` as numbered migration files, applied in order:
+
+```powershell
+Get-Content sql\ddl\V001__create_etl_execution_logs.sql -Raw |
+    docker compose exec -T postgres psql -U pipeline -d commodities -v ON_ERROR_STOP=1
+```
+
+They are deliberately **not** in `docker/postgres/initdb/`, which only runs on a
+completely empty database. Migrations can be applied to a database that already
+has data in it, which is the situation you are always in outside your laptop.
 
 ## Common commands
 
