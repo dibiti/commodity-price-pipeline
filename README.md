@@ -7,8 +7,9 @@ It also has a switch that makes it fail on purpose — injecting schema changes,
 null values or network timeouts — so the monitoring can be tested against real
 failures instead of imaginary ones.
 
-**Status:** early. The infrastructure and the database schema exist. There is no
-pipeline code yet — nothing is fetching prices so far.
+**Status:** the pipeline runs end to end on mock data — it fetches, cleans and
+loads prices, and records each run in the audit log. Still to come: the failure
+injection, the dashboards, the alerting and the scheduler.
 
 ## Requirements
 
@@ -29,6 +30,29 @@ Start the database and Grafana:
 docker compose up -d
 docker compose ps
 ```
+
+Create the Python environment and install the dependencies:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Run the pipeline:
+
+```powershell
+python -m src.pipeline.run_pipeline
+```
+
+By default it uses an offline mock source, so it needs no API key and no
+network — the whole project runs on a fresh clone with zero secrets. Run it
+twice: the second run loads the same rows without duplicating them, because the
+load is an idempotent upsert on `(commodity, date, currency)`.
+
+To use live data instead, get a free key from
+[Alpha Vantage](https://www.alphavantage.co/support/#api-key) and set
+`PRICE_SOURCE=api` and `COMMODITY_API_KEY=...` in `.env`.
 
 Grafana is at <http://localhost:3000>, using the login you set in `.env`.
 Postgres listens on `localhost:5432`.
