@@ -36,10 +36,14 @@ class Settings(BaseSettings):
     commodities: list[str] = ["BRENT", "WTI"]
     backfill_days: int = 7
 
-    # The chaos switch — wired up in Sprint 4, declared now so the contract
-    # is visible.
+    # The chaos switch. When simulate_failure is True, each run has a
+    # failure_probability chance of having a random fault injected.
     simulate_failure: bool = False
     failure_probability: float = 0.3
+    # Optional override: force one specific fault ("NETWORK_TIMEOUT",
+    # "SCHEMA_MISMATCH", "NULL_VALUES") instead of a random one. Empty = random.
+    # Handy for demoing or testing a single fault deterministically.
+    chaos_fault: str = ""
 
     # Optional alerting — Sprint 6.
     discord_webhook_url: str = ""

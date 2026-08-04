@@ -16,6 +16,7 @@ which is itself the signal that a run started and never finished.
 """
 
 import time
+import traceback as traceback_module
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine, text
@@ -31,7 +32,10 @@ _FINISH = text("""
            finished_at       = now(),
            latency_ms        = :latency_ms,
            records_processed = :records_processed,
-           error_message     = :error_message
+           error_message     = :error_message,
+           traceback         = :traceback,
+           simulated_failure = :simulated_failure,
+           injected_fault    = :injected_fault
      WHERE run_id = :run_id
 """)
 
@@ -44,6 +48,11 @@ class RunLogger:
         # loader can stamp it onto every price row of this run.
         self.run_id: UUID = uuid4()
         self.records_processed: int | None = None
+        # Set by the orchestrator when the chaos engine arms this run, so a
+        # simulated failure is flagged as such and never pollutes the real
+        # reliability numbers. Left at these defaults on a normal run.
+        self.simulated_failure: bool = False
+        self.injected_fault: str | None = None
         self._start = 0.0
 
     def __enter__(self) -> "RunLogger":
@@ -60,11 +69,15 @@ class RunLogger:
     def __exit__(self, exc_type, exc, tb) -> bool:
         latency_ms = int((time.monotonic() - self._start) * 1000)
         if exc_type is None:
-            status, error_message = "SUCCESS", None
+            status, error_message, tb_text = "SUCCESS", None, None
         else:
-            # str(exc) satisfies the ck_eel_failure_has_message constraint:
-            # a FAILED row must always carry an explanation.
-            status, error_message = "FAILED", f"{exc_type.__name__}: {exc}"
+            # error_message is the short headline dashboards and alerts show;
+            # str(exc) also satisfies ck_eel_failure_has_message (a FAILED row
+            # must carry an explanation). tb_text is the full stack trace, the
+            # detail a support engineer actually needs to diagnose the fault.
+            status = "FAILED"
+            error_message = f"{exc_type.__name__}: {exc}"
+            tb_text = "".join(traceback_module.format_exception(exc_type, exc, tb))
 
         with self._engine.begin() as conn:
             conn.execute(
@@ -75,6 +88,9 @@ class RunLogger:
                     "latency_ms": latency_ms,
                     "records_processed": self.records_processed,
                     "error_message": error_message,
+                    "traceback": tb_text,
+                    "simulated_failure": self.simulated_failure,
+                    "injected_fault": self.injected_fault,
                 },
             )
 

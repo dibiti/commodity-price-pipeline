@@ -7,11 +7,38 @@ is the piece that would have to change if the dataset ever grew to tens of
 millions of rows (see the memory note below).
 """
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 
 _OUTPUT_COLUMNS = ["commodity_code", "price_date", "price", "currency", "source"]
+_REQUIRED = ["commodity_code", "price_date", "price", "currency"]
+
+
+class DataQualityError(ValueError):
+    """Raised when incoming data violates a rule the pipeline must not pass on.
+
+    A distinct type so callers (and the audit log) can tell a data-quality
+    rejection apart from an ordinary bug.
+    """
+
+
+def _to_decimal(value) -> Decimal:
+    """Convert one price to an exact Decimal, refusing anything that is not a
+    finite number.
+
+    This is where the Sprint 4 chaos taught us a lesson. A missing price
+    arrives from pandas as NaN, and BOTH Decimal("nan") and Postgres accept it
+    (Postgres even reports NaN > 0 as true), so a blank price slipped silently
+    into the table. We reject non-numeric and non-finite values explicitly.
+    """
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation:
+        raise DataQualityError(f"price is not numeric: {value!r}") from None
+    if not result.is_finite():  # catches NaN and +/-Infinity
+        raise DataQualityError(f"price is not a finite number: {value!r}")
+    return result
 
 
 def normalize(raw: list[dict]) -> pd.DataFrame:
@@ -33,10 +60,17 @@ def normalize(raw: list[dict]) -> pd.DataFrame:
     df["source"] = df["source"].astype(str).str.strip()
     df["price_date"] = pd.to_datetime(df["price_date"]).dt.date
 
+    # Reject missing required fields up front. isna() catches both Python None
+    # and pandas NaN, so a dropped field fails here with a clear message rather
+    # than sneaking through as NaN. This is the fix for the null-injection hole.
+    missing = [col for col in _REQUIRED if df[col].isna().any()]
+    if missing:
+        raise DataQualityError(f"required field(s) contain null/NaN: {missing}")
+
     # Carry the price as Decimal, NOT float. We chose NUMERIC in the database
     # precisely to keep money exact; passing a float here would smuggle back in
-    # the very rounding error the schema was designed to avoid. Decimal(str(x))
-    # converts through the decimal string, so 82.13 stays exactly 82.13.
-    df["price"] = df["price"].apply(lambda value: Decimal(str(value)))
+    # the very rounding error the schema was designed to avoid. _to_decimal also
+    # rejects non-numeric and non-finite values.
+    df["price"] = df["price"].apply(_to_decimal)
 
     return df[_OUTPUT_COLUMNS]

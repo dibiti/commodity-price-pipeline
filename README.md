@@ -54,6 +54,34 @@ To use live data instead, get a free key from
 [Alpha Vantage](https://www.alphavantage.co/support/#api-key) and set
 `PRICE_SOURCE=api` and `COMMODITY_API_KEY=...` in `.env`.
 
+## The chaos switch
+
+The pipeline can break itself on purpose, to prove the monitoring works. Set
+`SIMULATE_FAILURE=True` and each run has a `FAILURE_PROBABILITY` chance of one
+of three faults being injected at random:
+
+| Fault | What it imitates | Where it surfaces |
+| --- | --- | --- |
+| `NETWORK_TIMEOUT` | the upstream API stalling | the extract step |
+| `SCHEMA_MISMATCH` | a field arriving with the wrong type | the transform step |
+| `NULL_VALUES` | a required price going missing | the transform step |
+
+Every run — clean or injected — writes one row to `ops.etl_execution_logs`
+recording its status, latency, row count, error message and full traceback.
+Injected failures are flagged `simulated_failure = TRUE` so they can be kept out
+of real reliability metrics. Force a specific fault for a demo:
+
+```powershell
+$env:SIMULATE_FAILURE="True"; $env:CHAOS_FAULT="NULL_VALUES"
+python -m src.pipeline.run_pipeline
+Remove-Item Env:SIMULATE_FAILURE, Env:CHAOS_FAULT
+```
+
+Building this switch surfaced a real bug: a missing price became a `NaN` that
+slipped past both the transform and the `price > 0` constraint (PostgreSQL sorts
+`NaN` as greater than every number). Both layers now reject it — which is the
+whole point of injecting failures on purpose.
+
 Grafana is at <http://localhost:3000>, using the login you set in `.env`.
 Postgres listens on `localhost:5432`.
 
