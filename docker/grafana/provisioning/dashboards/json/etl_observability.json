@@ -1,0 +1,239 @@
+{
+  "uid": "etl-observability",
+  "title": "ETL Observability",
+  "tags": ["pipeline", "sre"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Time since last success",
+      "description": "now() minus the last SUCCESSFUL finish. This is the freshness / dead-man's-switch metric: it keeps rising when the pipeline stops running, so it catches a run that never happened — which no count of existing rows can.",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 86400 },
+              { "color": "red", "value": 90000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(finished_at)))::int AS \"Time since last success\" FROM ops.etl_execution_logs WHERE status = 'SUCCESS';"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Real success rate",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 90 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT round(100.0 * count(*) FILTER (WHERE status = 'SUCCESS') / NULLIF(count(*), 0), 1) AS \"Real success rate\" FROM ops.etl_execution_logs WHERE NOT simulated_failure;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total runs",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "text" } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"Total runs\" FROM ops.etl_execution_logs;"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Real failures",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"Real failures\" FROM ops.etl_execution_logs WHERE status = 'FAILED' AND NOT simulated_failure;"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Simulated (chaos) failures",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS \"Simulated failures\" FROM ops.etl_execution_logs WHERE simulated_failure;"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Run latency over time",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "pointSize": 6, "showPoints": "always", "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "showLegend": true }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT started_at AS \"time\", latency_ms AS \"latency (ms)\" FROM ops.etl_execution_logs WHERE $__timeFilter(started_at) ORDER BY started_at;"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "Injected faults breakdown",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "pieType": "donut",
+        "legend": { "showLegend": true, "placement": "right" }
+      },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT injected_fault AS \"fault\", count(*) AS \"count\" FROM ops.etl_execution_logs WHERE injected_fault IS NOT NULL GROUP BY injected_fault ORDER BY count DESC;"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Recent runs (flight recorder)",
+      "datasource": { "type": "postgres", "uid": "commodity-postgres" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 13 },
+      "options": { "showHeader": true },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "SUCCESS": { "color": "green", "index": 0 } } },
+                  { "type": "value", "options": { "FAILED": { "color": "red", "index": 1 } } },
+                  { "type": "value", "options": { "RUNNING": { "color": "yellow", "index": 2 } } }
+                ]
+              },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT started_at AS \"started\", pipeline_name AS \"pipeline\", status, injected_fault AS \"fault\", latency_ms AS \"ms\", records_processed AS \"rows\", error_message AS \"error\" FROM ops.etl_execution_logs ORDER BY started_at DESC LIMIT 50;"
+        }
+      ]
+    }
+  ]
+}

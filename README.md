@@ -82,7 +82,28 @@ slipped past both the transform and the `price > 0` constraint (PostgreSQL sorts
 `NaN` as greater than every number). Both layers now reject it — which is the
 whole point of injecting failures on purpose.
 
-Grafana is at <http://localhost:3000>, using the login you set in `.env`.
+## Dashboards
+
+Grafana is at <http://localhost:3000> (log in with the `GRAFANA_ADMIN_*` values
+from `.env`). Open **Dashboards → Pipeline → ETL Observability**.
+
+The dashboard reads `ops.etl_execution_logs` directly and shows, at a glance:
+
+- **Time since last success** — the freshness / dead-man's-switch metric. It
+  measures the age of the last successful run, so it keeps climbing (and turns
+  red) when the pipeline stops running entirely. This is the one signal that
+  catches a run which never happened, because a count of existing rows can't
+- **Real success rate** and **real failures**, which exclude chaos-injected
+  failures (`simulated_failure = TRUE`) so a demo never dents the true numbers
+- **Run latency over time**, to catch a pipeline that is slowing down
+- **Injected faults breakdown**, and a **flight-recorder table** of recent runs
+  with their status, latency, row count and error
+
+The dashboard is provisioned as code from
+`docker/grafana/provisioning/dashboards/`, so it appears automatically on any
+clone — there is no manual setup. It fills with more history as you run the
+pipeline over time.
+
 Postgres listens on `localhost:5432`.
 
 To confirm the database came up correctly:

@@ -1,0 +1,26 @@
+# Dashboard provisioning — load dashboards from JSON files on disk.
+#
+# The companion to the datasource provisioning from Sprint 1. Same reasoning:
+# a dashboard built by clicking in the UI lives only in Grafana's private
+# volume and vanishes if that volume is wiped. Defined as a JSON file in the
+# repo, it is version-controlled, reviewable, and reappears on any clone.
+#
+# Grafana scans options.path for *.json dashboards on boot and every
+# updateIntervalSeconds, so editing the JSON and waiting a moment reloads it —
+# no restart strictly required (a restart just makes it immediate).
+
+apiVersion: 1
+
+providers:
+  - name: "Pipeline dashboards"
+    orgId: 1
+    # The folder they appear under in the Grafana UI.
+    folder: "Pipeline"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    # false = the file on disk is the source of truth. Edits made by clicking
+    # in the UI are reverted on the next reload, just like the datasource.
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
