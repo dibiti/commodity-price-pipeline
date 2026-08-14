@@ -53,6 +53,9 @@ class RunLogger:
         # reliability numbers. Left at these defaults on a normal run.
         self.simulated_failure: bool = False
         self.injected_fault: str | None = None
+        # Exposed after the run so a caller (e.g. the alerter) can read the
+        # measured duration without recomputing it.
+        self.latency_ms: int | None = None
         self._start = 0.0
 
     def __enter__(self) -> "RunLogger":
@@ -68,6 +71,7 @@ class RunLogger:
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         latency_ms = int((time.monotonic() - self._start) * 1000)
+        self.latency_ms = latency_ms
         if exc_type is None:
             status, error_message, tb_text = "SUCCESS", None, None
         else:

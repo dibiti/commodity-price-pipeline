@@ -104,6 +104,26 @@ The dashboard is provisioned as code from
 clone — there is no manual setup. It fills with more history as you run the
 pipeline over time.
 
+## Alerting
+
+A dashboard shows a failure; it does not tell you about it. When a run fails,
+the pipeline sends a Discord alert with the severity, pipeline name, error type,
+latency and run id.
+
+Alerting is **optional and best-effort**, by design:
+
+- With no `DISCORD_WEBHOOK_URL` set, the alert is logged instead of sent, so the
+  pipeline (and its tests) run with no secrets at all.
+- The alert is only ever attempted *after* the run's outcome is written to
+  `ops.etl_execution_logs`. A slow or failing webhook loses a notification,
+  never a record — the database is the source of truth.
+- Delivery never raises and always times out, so a webhook problem cannot break
+  the pipeline or hide the original error.
+
+To enable it, create a webhook in a Discord server (Server Settings →
+Integrations → Webhooks) and set `DISCORD_WEBHOOK_URL` in `.env`. A dedicated
+server used only for this project keeps the blast radius to nothing.
+
 Postgres listens on `localhost:5432`.
 
 To confirm the database came up correctly:

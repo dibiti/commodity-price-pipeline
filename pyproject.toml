@@ -1,0 +1,8 @@
+# Minimal project config. For now it only configures pytest; build metadata and
+# tool settings can grow here later.
+
+[tool.pytest.ini_options]
+# Put the project root on sys.path so tests can import `src.pipeline...`
+# whether you run `pytest` or `python -m pytest`.
+pythonpath = ["."]
+testpaths = ["tests"]

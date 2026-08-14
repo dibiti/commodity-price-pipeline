@@ -9,8 +9,9 @@ today from the project root:
 
 import logging
 import random
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
+from .alerting.alerter import Alert, DiscordAlerter
 from .chaos.engine import ChaosEngine
 from .config import Settings, get_settings
 from .db import get_engine
@@ -45,6 +46,9 @@ def main() -> None:
     settings = get_settings()
     engine = get_engine()
     source = make_source(settings)
+    # No webhook set => the alerter logs instead of posting. The pipeline runs
+    # the same with or without a real Discord URL.
+    alerter = DiscordAlerter(settings.discord_webhook_url)
 
     # Decide this run's chaos outcome once, up front. On a normal run
     # (SIMULATE_FAILURE=False) the engine is inert and every hook is a no-op.
@@ -60,31 +64,50 @@ def main() -> None:
     end = date.today()
     start = end - timedelta(days=settings.backfill_days - 1)
 
-    # Everything inside this block is one audited run. If any step raises —
-    # whether a real fault or an injected one — the RunLogger records FAILED
-    # with the full traceback and re-raises. Nothing is silently lost.
-    with RunLogger(engine, "commodity_daily") as run:
-        # Tell the audit log this run's failure (if any) was simulated, so it
-        # can be filtered out of real reliability metrics later.
-        run.simulated_failure = chaos.active
-        run.injected_fault = chaos.fault
+    run = RunLogger(engine, "commodity_daily")
+    try:
+        # Everything inside this block is one audited run. If any step raises —
+        # a real fault or an injected one — the RunLogger records FAILED with
+        # the full traceback and re-raises. Nothing is silently lost.
+        with run:
+            # Flag a simulated failure so it can be excluded from real metrics.
+            run.simulated_failure = chaos.active
+            run.injected_fault = chaos.fault
 
-        log.info(
-            "Run %s: fetching %s for %s..%s",
-            run.run_id,
-            settings.commodities,
-            start,
-            end,
+            log.info(
+                "Run %s: fetching %s for %s..%s",
+                run.run_id,
+                settings.commodities,
+                start,
+                end,
+            )
+
+            chaos.before_extract()  # may raise an injected network timeout
+            raw = source.fetch(settings.commodities, start, end)  # extract
+            raw = chaos.corrupt(raw)  # may inject a schema mismatch or null
+            df = normalize(raw)  # transform (where corrupted data fails)
+            count = upsert_prices(engine, df, run.run_id)  # load
+
+            run.records_processed = count
+            log.info("Run %s: loaded %d rows", run.run_id, count)
+    except Exception as exc:
+        # Persist first, notify second: the FAILED row (with traceback) is
+        # already written by RunLogger.__exit__ above. Only now do we send the
+        # best-effort alert — send() never raises — and then re-raise so the
+        # failure still surfaces to whoever ran the pipeline.
+        alerter.send(
+            Alert(
+                severity="CRITICAL",
+                pipeline_name="commodity_daily",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                timestamp=datetime.now(UTC).isoformat(),
+                latency_ms=run.latency_ms,
+                run_id=str(run.run_id),
+                simulated=run.simulated_failure,
+            )
         )
-
-        chaos.before_extract()  # may raise an injected network timeout
-        raw = source.fetch(settings.commodities, start, end)  # extract
-        raw = chaos.corrupt(raw)  # may inject a schema mismatch or null
-        df = normalize(raw)  # transform (where corrupted data fails)
-        count = upsert_prices(engine, df, run.run_id)  # load
-
-        run.records_processed = count
-        log.info("Run %s: loaded %d rows", run.run_id, count)
+        raise
 
 
 if __name__ == "__main__":
