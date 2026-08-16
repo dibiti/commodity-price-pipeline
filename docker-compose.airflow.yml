@@ -1,0 +1,106 @@
+# Airflow orchestration — an OPT-IN overlay on top of the core stack.
+#
+# Run it merged with the main file so the Airflow containers share the
+# `pipeline-net` network and can reach the app database at `postgres:5432`:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d
+#
+# The core stack (docker compose up -d) stays light and Airflow-free unless you
+# ask for this file. Airflow is heavy, so this keeps day-to-day work fast.
+name: commodity-pipeline
+
+# A shared definition folded into each Airflow service, to avoid repetition.
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: commodity-airflow:local
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    # Airflow's OWN metadata database — separate from the app's `commodities`
+    # DB, and using psycopg2 (what the Airflow base image ships).
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    # Encrypts stored connections/variables. Set a stable key in .env so values
+    # survive restarts; a blank one makes Airflow generate a throwaway per boot.
+    AIRFLOW__CORE__FERNET_KEY: "${AIRFLOW_FERNET_KEY:-}"
+    # The PIPELINE's own database URL. Host is `postgres` (the app DB service
+    # name on the shared network), NOT localhost — this runs inside a container.
+    # Airflow ignores this variable; the pipeline task reads it.
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - ./src:/opt/pipeline/src:ro          # the pipeline code, launched by the DAG
+    - airflow-logs:/opt/airflow/logs
+  networks:
+    - pipeline-net
+
+services:
+  # Airflow's metadata store. Its own instance so its churn never touches the
+  # pipeline's warehouse.
+  airflow-postgres:
+    image: postgres:16.4-alpine
+    container_name: cpp-airflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-net
+
+  # One-shot: create the metadata schema and an admin user, then exit.
+  airflow-init:
+    <<: *airflow-common
+    container_name: cpp-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin --password admin \
+          --firstname admin --lastname admin \
+          --role Admin --email admin@example.com || true
+    restart: on-failure
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+
+  # The heart of Airflow: parses DAGs and runs tasks on schedule.
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: cpp-airflow-scheduler
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # The web UI, for viewing and triggering DAGs. Loopback-only, like the rest.
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: cpp-airflow-webserver
+    command: webserver
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  airflow-pgdata:
+  airflow-logs:
+
+networks:
+  pipeline-net:
+    driver: bridge

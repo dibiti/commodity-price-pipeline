@@ -124,6 +124,31 @@ To enable it, create a webhook in a Discord server (Server Settings →
 Integrations → Webhooks) and set `DISCORD_WEBHOOK_URL` in `.env`. A dedicated
 server used only for this project keeps the blast radius to nothing.
 
+## Orchestration (Airflow)
+
+Running the pipeline by hand is fine for development; in production something has
+to run it on a schedule, retry transient failures, and show the result. That is
+Airflow's job. It runs as an **opt-in overlay** on top of the core stack, so
+everyday work stays light:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d
+```
+
+Then open the Airflow UI at <http://localhost:8080> (log in `admin` / `admin`),
+enable the `commodity_daily` DAG, and trigger it. It runs daily at 06:00, with
+two retries on failure.
+
+Two design points worth knowing:
+
+- **Airflow cannot run natively on Windows** (it needs POSIX), which is the main
+  reason the whole project is containerised.
+- Airflow pins older versions of some libraries the pipeline also uses, so the
+  DAG never imports the pipeline. It **launches it as a command** inside an
+  isolated virtualenv (see `docker/airflow/Dockerfile`), keeping the two
+  dependency sets completely apart. Airflow orchestrates; the pipeline runs
+  beside it and writes to the same database, which the Grafana dashboard reads.
+
 Postgres listens on `localhost:5432`.
 
 To confirm the database came up correctly:
