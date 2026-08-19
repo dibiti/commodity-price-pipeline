@@ -1,5 +1,7 @@
 # Commodity Price Ingestion Pipeline
 
+![CI](https://github.com/dibiti/commodity-price-pipeline/actions/workflows/ci.yml/badge.svg)
+
 A daily pipeline that pulls commodity prices into Postgres, records every run in
 an audit table, and shows the results in Grafana.
 
@@ -7,9 +9,11 @@ It also has a switch that makes it fail on purpose — injecting schema changes,
 null values or network timeouts — so the monitoring can be tested against real
 failures instead of imaginary ones.
 
-**Status:** the pipeline runs end to end on mock data — it fetches, cleans and
-loads prices, and records each run in the audit log. Still to come: the failure
-injection, the dashboards, the alerting and the scheduler.
+**What it does, end to end:** an Airflow DAG runs the pipeline daily; each run
+extracts prices (an offline mock by default, a live API optionally), cleans and
+validates them, and upserts them into Postgres. Every run — success or failure —
+is recorded in an audit table that drives a Grafana dashboard and a Discord
+alert. A chaos switch injects controlled failures to prove the monitoring works.
 
 ## Requirements
 
@@ -159,6 +163,28 @@ docker compose exec postgres psql -U pipeline -d commodities -c '\dn'
 
 That should list three schemas: `raw` (data as received), `core` (cleaned data),
 and `ops` (the pipeline's own run logs).
+
+## Tests and CI
+
+Run the checks locally the same way CI does:
+
+```powershell
+ruff check src tests dags        # lint
+ruff format --check src tests dags
+pytest -q                        # unit tests (no database needed)
+```
+
+Every push and pull request runs [GitHub Actions](.github/workflows/ci.yml):
+a **quality** job (lint, format, unit tests) and an **integration** job that
+starts a real Postgres, applies the schema, runs the pipeline, and asserts the
+data landed. Both run with no secrets.
+
+Optionally, install the local pre-commit hooks so lint, formatting and a
+private-key check run automatically on every commit:
+
+```powershell
+pre-commit install
+```
 
 ## Database schema
 

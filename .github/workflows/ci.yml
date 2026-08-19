@@ -1,0 +1,104 @@
+# Continuous Integration — runs on every push and pull request to main.
+#
+# Two jobs:
+#   * quality      — lint, format check, and unit tests. Fast, needs nothing
+#                    external. These are the checks that must always be green.
+#   * integration  — spins up a real Postgres, applies the schema, runs the
+#                    pipeline end to end, and asserts the data actually landed.
+#
+# The whole thing runs with NO secrets: the pipeline defaults to its offline
+# mock source, and the unit tests fake the network. Those design choices from
+# earlier sprints are exactly what make the project cleanly CI-able now.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check src tests dags
+
+      - name: Format check (ruff)
+        run: ruff format --check src tests dags
+
+      - name: Unit tests (pytest)
+        run: pytest -q
+
+  integration:
+    name: End-to-end on Postgres
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres for this job only, mirroring the local stack.
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: pipeline
+          POSTGRES_PASSWORD: pipeline
+          POSTGRES_DB: commodities
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pipeline"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Host is localhost here: the service is published to the runner.
+      DATABASE_URL: postgresql+psycopg://pipeline:pipeline@localhost:5432/commodities
+      PGPASSWORD: pipeline
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply schema (bootstrap + migrations)
+        run: |
+          psql -h localhost -U pipeline -d commodities -v ON_ERROR_STOP=1 \
+            -f docker/postgres/initdb/001_init_schema.sql
+          for f in sql/ddl/V*.sql; do
+            echo "applying $f"
+            psql -h localhost -U pipeline -d commodities -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Run the pipeline
+        run: python -m src.pipeline.run_pipeline
+
+      - name: Assert the data landed
+        run: |
+          PRICES=$(psql -h localhost -U pipeline -d commodities -tAc \
+            "SELECT count(*) FROM core.commodity_prices;")
+          RUNS=$(psql -h localhost -U pipeline -d commodities -tAc \
+            "SELECT count(*) FROM ops.etl_execution_logs WHERE status = 'SUCCESS';")
+          echo "prices loaded: $PRICES / successful runs: $RUNS"
+          test "$PRICES" -ge 14
+          test "$RUNS" -ge 1

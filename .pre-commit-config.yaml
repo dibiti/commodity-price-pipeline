@@ -1,0 +1,32 @@
+# Pre-commit hooks: a local safety net that runs BEFORE a commit is created, so
+# problems are caught on your machine instead of by CI minutes later. Install
+# once per clone:
+#
+#   pre-commit install
+#
+# Then every `git commit` runs these automatically. Run them by hand any time:
+#
+#   pre-commit run --all-files
+
+repos:
+  # Lint and format with ruff — the same tool CI uses, so local and CI agree.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # A handful of small, universally useful checks.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      # The one that matters most for this project: refuse to commit a private
+      # key. It is the automated backstop behind our .gitignore, so a secret
+      # can never slip into history even if .gitignore is edited by mistake.
+      - id: detect-private-key
